@@ -1,0 +1,23 @@
+[package]
+name = "stm32g0-ll-drivers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.stm32g0]
+package = "stm32g0-staging"
+version = "0.17.0"
+
+[features]
+default = ["stm32g0b1"]
+stm32g030 = ["stm32g0/stm32g030"]
+stm32g031 = ["stm32g0/stm32g031"]
+stm32g041 = ["stm32g0/stm32g041"]
+stm32g070 = ["stm32g0/stm32g070"]
+stm32g071 = ["stm32g0/stm32g071"]
+stm32g081 = ["stm32g0/stm32g081"]
+stm32g0b1 = ["stm32g0/stm32g0b1"]
+stm32g0c1 = ["stm32g0/stm32g0c1"]
+
+[dev-dependencies]
+cortex-m-rt = "0.7.5"
+panic-halt = "1.0.0"
