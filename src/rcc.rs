@@ -2,6 +2,8 @@ use crate::pac;
 use core::convert::From;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+const HSE_FREQ: u32 = 8_000_000;
+
 static TAKEN: AtomicBool = AtomicBool::new(false);
 
 pub struct Rcc {
@@ -23,17 +25,30 @@ impl Rcc {
         }
     }
 
-    /// Set the PLL clock state
-    ///
-    /// ```rust
-    /// use stm32g0_ll_drivers::rcc;
-    ///
-    /// // Take the RCC peripheral
-    /// let mut rcc = rcc::Rcc::take();
-    ///
-    /// // Enable the PLL clock
-    /// rcc.set_pll_state(true)
-    /// ```
+    pub fn set_sys_clock_source(&mut self, clk_source: SystemClockSource) {
+        unsafe {
+            (*self.rb)
+                .cfgr()
+                .modify(|_, w| w.sw().bits(clk_source.into()));
+        }
+    }
+
+    pub fn get_sys_clock_source(&self) -> SystemClockSource {
+        unsafe { SystemClockSource::from_u8((*self.rb).cfgr().read().sws().bits()).unwrap() }
+    }
+
+    pub fn get_sys_clock_freq(&self) -> u32 {
+        match self.get_sys_clock_source() {
+            SystemClockSource::HSE => HSE_FREQ,
+            SystemClockSource::PLL => {
+                // getfreqdomain
+            }
+            _ => {
+                // todo
+            }
+        }
+    }
+
     pub fn set_pll_state(&mut self, state: bool) {
         unsafe {
             (*self.rb).cr().modify(|_, w| w.pllon().bit(state));
@@ -41,30 +56,56 @@ impl Rcc {
     }
 
     /// Check if the PLL clock is locked (ready)
-    pub fn is_pll_locked(&mut self) -> bool {
+    pub fn is_pll_locked(&self) -> bool {
         unsafe { (*self.rb).cr().read().pllrdy().is_locked() }
     }
 
-    /// Set the PLL clock state
-    ///
-    /// ```rust
-    /// use stm32g0_ll_drivers::rcc;
-    ///
-    /// // Take the RCC peripheral
-    /// let mut rcc = rcc::Rcc::take();
-    ///
-    /// // Enable the HSI48 clock
-    /// rcc.set_hsi48_state(true);
-    /// ```
     pub fn set_hsi48_state(&mut self, state: bool) {
         unsafe {
             (*self.rb).cr().modify(|_, w| w.hsi48on().bit(state));
         }
     }
 
-    /// Check if the HSI48 clock is ready
-    pub fn is_hsi48_ready(&mut self) -> bool {
+    pub fn is_hsi48_ready(&self) -> bool {
         unsafe { (*self.rb).cr().read().hsirdy().is_ready() }
+    }
+
+    pub fn set_hse_state(&mut self, state: bool) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.hseon().bit(state));
+        }
+    }
+
+    pub fn is_hse_ready(&self) -> bool {
+        unsafe { (*self.rb).cr().read().hserdy().is_ready() }
+    }
+
+    pub fn set_hsi_state(&mut self, state: bool) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.hsion().bit(state));
+        }
+    }
+
+    pub fn is_hsi_ready(&self) -> bool {
+        unsafe { (*self.rb).cr().read().hsirdy().is_ready() }
+    }
+
+    pub fn set_clock_security_system(&mut self, state: bool) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.csson().bit(state));
+        }
+    }
+
+    pub fn bypass_hse_crystal_oscillator(&mut self, state: bool) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.hsebyp().bit(state));
+        }
+    }
+
+    pub fn set_hsi16_division_factor(&mut self, div: HSI16DivisionFactor) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.hsidiv().bits(div.into()));
+        }
     }
 
     pub fn enable_peripheral_clock(&mut self, p: Peripheral) {
@@ -110,6 +151,69 @@ impl Rcc {
             (*self.rb)
                 .iopenr()
                 .modify(|r, w| w.bits(r.bits() & !(1u32 << u8::from(g))));
+        }
+    }
+}
+
+/// System clock sources
+pub enum SystemClockSource {
+    HSI,
+    HSE,
+    PLL,
+    LSI,
+    LSE,
+}
+
+impl From<SystemClockSource> for u8 {
+    fn from(value: SystemClockSource) -> Self {
+        use SystemClockSource::*;
+        match value {
+            HSI => 0,
+            HSE => 1,
+            PLL => 2,
+            LSI => 3,
+            LSE => 4,
+        }
+    }
+}
+
+impl SystemClockSource {
+    fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::HSI),
+            1 => Some(Self::HSE),
+            2 => Some(Self::PLL),
+            3 => Some(Self::LSI),
+            4 => Some(Self::LSE),
+            _ => None,
+        }
+    }
+}
+
+/// HSI16 clock division factor
+pub enum HSI16DivisionFactor {
+    Div1,
+    Div2,
+    Div4,
+    Div8,
+    Div16,
+    Div32,
+    Div64,
+    Div128,
+}
+
+impl From<HSI16DivisionFactor> for u8 {
+    fn from(value: HSI16DivisionFactor) -> Self {
+        use HSI16DivisionFactor::*;
+        match value {
+            Div1 => 0,
+            Div2 => 1,
+            Div4 => 2,
+            Div8 => 3,
+            Div16 => 4,
+            Div32 => 5,
+            Div64 => 6,
+            Div128 => 7,
         }
     }
 }

@@ -4,12 +4,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 static TAKEN: AtomicBool = AtomicBool::new(false);
 
-pub struct Adc<'a> {
-    rb: &'a pac::adc::RegisterBlock,
+pub struct Adc {
+    rb: *const pac::adc::RegisterBlock,
 }
 
-impl Adc<'static> {
-    pub fn new(rcc: &mut rcc::Rcc<'static>) -> Option<Self> {
+impl Adc {
+    pub fn new(rcc: &mut rcc::Rcc) -> Option<Self> {
         // Enable the ADC peripheral clock
         rcc.enable_peripheral_clock(rcc::Peripheral::APB2(rcc::APB2Peripheral::ADC));
 
@@ -26,50 +26,49 @@ impl Adc<'static> {
         }
     }
 
-    ///  Set ADC clock mode
-    pub fn set_clock_mode(&mut self, clock_mode: ClockMode) {
-        self.rb
-            .cfgr2
-            .modify(|_, w| w.ckmode().bits(clock_mode.into()));
+    /// Start ADC calibration
+    pub fn calibrate(&mut self) {
+        unsafe {
+            (*self.rb).cr().modify(|_, w| w.adcal().start_calibration());
+
+            while (*self.rb).cr().read().adcal().bit_is_set() {}
+        }
     }
 
-    /// Get ADC clock mode
-    pub fn get_clock_mode(&mut self) -> Option<ClockMode> {
-        ClockMode::from_u8(self.rb.cfgr2.read().ckmode().bits())
+    ///  Set ADC clock mode
+    pub fn set_clock_mode(&mut self, clock_mode: ClockMode) {
+        unsafe {
+            (*self.rb)
+                .cfgr2()
+                .modify(|_, w| w.ckmode().bits(clock_mode.into()));
+        }
     }
 
     /// Set ADC resolution
     pub fn set_resolution(&mut self, resolution: Resolution) {
-        self.rb.cfgr1.modify(|_, w| w.res().bits(resolution.into()));
-    }
-
-    /// Get ADC resolution
-    pub fn get_resolution(&mut self) -> Resolution {
-        Resolution::from_u8(self.rb.cfgr1.read().res().bits()).unwrap()
+        unsafe {
+            (*self.rb)
+                .cfgr1()
+                .modify(|_, w| w.res().bits(resolution.into()));
+        }
     }
 
     /// Set ADC data alignment
     pub fn set_data_alignment(&mut self, data_alignment: DataAlignment) {
-        self.rb
-            .cfgr1
-            .modify(|_, w| w.align().bit(data_alignment.into()));
-    }
-
-    /// Get ADC data alignment
-    pub fn get_data_alignment(&mut self) -> DataAlignment {
-        DataAlignment::from_bool(self.rb.cfgr1.read().align().bit())
+        unsafe {
+            (*self.rb)
+                .cfgr1()
+                .modify(|_, w| w.align().bit(data_alignment.into()));
+        }
     }
 
     /// Set ADC low power mode
     pub fn set_low_power_mode(&mut self, low_power_mode: LowPowerMode) {
-        self.rb.cfgr1.modify(|r, w| unsafe {
-            w.bits(r.bits() & !((u8::from(low_power_mode) as u32) << 14))
-        });
-    }
-
-    /// Get ADC low power mode
-    pub fn get_low_power_mode(&mut self) -> Option<LowPowerMode> {
-        LowPowerMode::from_u8(((self.rb.cfgr1.read().bits() >> 14) & 3u32) as u8)
+        unsafe {
+            (*self.rb)
+                .cfgr1()
+                .modify(|r, w| w.bits(r.bits() & !((u8::from(low_power_mode) as u32) << 14)));
+        }
     }
 
     /// Set sampling time for a common group
@@ -78,18 +77,11 @@ impl Adc<'static> {
         common_group: SamplingTimeCommonGroup,
         sampling_time: SamplingTime,
     ) {
-        self.rb.smpr.modify(|r, w| unsafe {
-            w.bits(r.bits() & !((u8::from(sampling_time) << u8::from(common_group)) as u32))
-        });
-    }
-
-    /// Get sampling time of a common group
-    pub fn get_common_group_sampling_time(
-        &mut self,
-        common_group: SamplingTimeCommonGroup,
-    ) -> SamplingTime {
-        SamplingTime::from_u8(((self.rb.smpr.read().bits() >> u8::from(common_group)) & 7u32) as u8)
-            .unwrap()
+        unsafe {
+            (*self.rb).smpr().modify(|r, w| {
+                w.bits(r.bits() & !((u8::from(sampling_time) << u8::from(common_group)) as u32))
+            });
+        }
     }
 
     /// Set sampling time group for a channel
@@ -98,54 +90,88 @@ impl Adc<'static> {
         channel: Channel,
         common_group: SamplingTimeCommonGroup,
     ) {
-        self.rb.smpr.modify(|r, w| unsafe {
-            w.bits(r.bits() & !((bool::from(common_group) as u8) << (u8::from(channel) + 8)) as u32)
-        });
+        unsafe {
+            (*self.rb).smpr().modify(|r, w| {
+                w.bits(
+                    r.bits()
+                        & !((bool::from(common_group) as u8) << (u8::from(channel) + 8)) as u32,
+                )
+            });
+        }
     }
+}
 
-    /// Get sampling time group of a channel
-    pub fn get_channel_sampling_time_group(&mut self, channel: Channel) -> SamplingTimeCommonGroup {
-        SamplingTimeCommonGroup::from_bool(
-            ((self.rb.smpr.read().bits() >> (u8::from(channel) + 8)) & 1u32) != 0,
-        )
+/// ADC external trigger mode
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalTriggerMode {
+    Disabled,
+    RisingEdge,
+    FallingEdge,
+    RisingAndFallingEdge,
+}
+
+impl From<ExternalTriggerMode> for u8 {
+    fn from(value: ExternalTriggerMode) -> Self {
+        use ExternalTriggerMode::*;
+        match value {
+            Disabled => 0,
+            RisingEdge => 1,
+            FallingEdge => 2,
+            RisingAndFallingEdge => 3,
+        }
+    }
+}
+
+/// ADC external trigger source
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalTriggerSource {
+    TRG0,
+    TRG1,
+    TRG2,
+    TRG3,
+    TRG4,
+    TRG5,
+    TRG6,
+    TRG7,
+}
+
+impl From<ExternalTriggerSource> for u8 {
+    fn from(value: ExternalTriggerSource) -> Self {
+        use ExternalTriggerSource::*;
+        match value {
+            TRG0 => 0,
+            TRG1 => 1,
+            TRG2 => 2,
+            TRG3 => 3,
+            TRG4 => 4,
+            TRG5 => 5,
+            TRG6 => 6,
+            TRG7 => 7,
+        }
     }
 }
 
 /// ADC clock mode
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClockMode {
+    /// Asynchronous clock mode.
+    Async,
     /// Synchronous clock mode.
     SyncPclkDiv1,
     /// Synchronous clock mode.
     SyncPclkDiv2,
     /// Synchronous clock mode.
     SyncPclkDiv4,
-    /// Asynchronous clock mode.
-    Async,
 }
 
 impl From<ClockMode> for u8 {
     fn from(value: ClockMode) -> Self {
         use ClockMode::*;
         match value {
-            SyncPclkDiv1 => 0,
+            Async => 0,
             SyncPclkDiv2 => 1,
             SyncPclkDiv4 => 2,
-            Async => 3,
-        }
-    }
-}
-
-impl ClockMode {
-    /// Get clock mode from u8
-    pub fn from_u8(value: u8) -> Option<Self> {
-        use ClockMode::*;
-        match value {
-            0 => Some(SyncPclkDiv1),
-            1 => Some(SyncPclkDiv2),
-            2 => Some(SyncPclkDiv4),
-            3 => Some(Async),
-            _ => None,
+            SyncPclkDiv1 => 3,
         }
     }
 }
@@ -175,20 +201,6 @@ impl From<Resolution> for u8 {
     }
 }
 
-impl Resolution {
-    /// Get Resolution from adc::vals::Res
-    pub fn from_u8(value: u8) -> Option<Self> {
-        use Resolution::*;
-        match value {
-            0 => Some(Bits12),
-            1 => Some(Bits10),
-            2 => Some(Bits8),
-            3 => Some(Bits6),
-            _ => None,
-        }
-    }
-}
-
 /// ADC data alignment
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataAlignment {
@@ -204,16 +216,6 @@ impl From<DataAlignment> for bool {
         match value {
             Right => false,
             Left => true,
-        }
-    }
-}
-
-impl DataAlignment {
-    pub fn from_bool(value: bool) -> DataAlignment {
-        use DataAlignment::*;
-        match value {
-            false => Right,
-            true => Left,
         }
     }
 }
@@ -243,18 +245,6 @@ impl From<LowPowerMode> for u8 {
     }
 }
 
-impl LowPowerMode {
-    pub fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(LowPowerMode::None),
-            1 => Some(LowPowerMode::AutoWait),
-            2 => Some(LowPowerMode::AutoPowerOff),
-            3 => Some(LowPowerMode::AutoWaitAndPowerOff),
-            _ => None,
-        }
-    }
-}
-
 /// ADC sampling time common group
 pub enum SamplingTimeCommonGroup {
     /// Sampling time common group 1
@@ -279,16 +269,6 @@ impl From<SamplingTimeCommonGroup> for bool {
         match value {
             Common1 => false,
             Common2 => true,
-        }
-    }
-}
-
-impl SamplingTimeCommonGroup {
-    fn from_bool(value: bool) -> Self {
-        use SamplingTimeCommonGroup::*;
-        match value {
-            false => Common1,
-            true => Common2,
         }
     }
 }
@@ -326,23 +306,6 @@ impl From<SamplingTime> for u8 {
             T39_5 => 5,
             T79_5 => 6,
             T160_5 => 7,
-        }
-    }
-}
-
-impl SamplingTime {
-    pub fn from_u8(value: u8) -> Option<Self> {
-        use SamplingTime::*;
-        match value {
-            0 => Some(T1_5),
-            1 => Some(T3_5),
-            2 => Some(T7_5),
-            3 => Some(T12_5),
-            4 => Some(T19_5),
-            5 => Some(T39_5),
-            6 => Some(T79_5),
-            7 => Some(T160_5),
-            _ => None,
         }
     }
 }

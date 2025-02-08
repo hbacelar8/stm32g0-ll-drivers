@@ -10,6 +10,6 @@ pub trait Taker<T> {
     fn take(self) -> T;
 }
 
-//pub mod adc;
+pub mod adc;
 pub mod gpio;
 pub mod rcc;
